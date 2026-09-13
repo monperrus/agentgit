@@ -1054,13 +1054,36 @@ class GitRepoBuilder:
         git_date = format_git_date(timestamp)
         old_author_date = os.environ.get('GIT_AUTHOR_DATE')
         old_committer_date = os.environ.get('GIT_COMMITTER_DATE')
+
+        def write_msg_file(message: str) -> str:
+            import tempfile
+            with tempfile.NamedTemporaryFile(
+                "w", suffix=".msg", delete=False
+            ) as msg_file:
+                msg_file.write(message)
+            return msg_file.name
+
         try:
             os.environ['GIT_AUTHOR_DATE'] = git_date
             os.environ['GIT_COMMITTER_DATE'] = git_date
-            if allow_empty:
-                self.repo.git.commit("--allow-empty", "-m", commit_msg)
-            else:
-                self.repo.index.commit(commit_msg)
+            # Pass large messages via -F: argv has a hard OS limit and
+            # transcript entries (full Write payloads, giant tool outputs)
+            # regularly exceed it.
+            use_file = len(commit_msg) > 100_000
+            msg_file = write_msg_file(commit_msg) if use_file else None
+            try:
+                if allow_empty:
+                    if use_file:
+                        self.repo.git.commit("--allow-empty", "-F", msg_file)
+                    else:
+                        self.repo.git.commit("--allow-empty", "-m", commit_msg)
+                elif use_file:
+                    self.repo.git.commit("-F", msg_file)
+                else:
+                    self.repo.index.commit(commit_msg)
+            finally:
+                if msg_file:
+                    os.unlink(msg_file)
         finally:
             # Restore old env vars
             if old_author_date is not None:

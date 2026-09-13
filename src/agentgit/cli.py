@@ -92,10 +92,18 @@ def get_default_output_dir(transcript_path: Path) -> Path:
 def resolve_transcripts(transcript: Path | None) -> list[Path]:
     """Resolve transcript paths, using auto-discovery if not provided.
 
-    If a transcript is explicitly provided, returns a single-item list.
-    Otherwise, discovers all transcripts for the current project.
+    If a transcript is explicitly provided, returns it. A directory is
+    expanded to its ``*.jsonl`` files. Otherwise, discovers all transcripts
+    for the current project.
     """
     if transcript is not None:
+        if transcript.is_dir():
+            jsonl_files = sorted(transcript.glob("*.jsonl"))
+            if not jsonl_files:
+                raise click.ClickException(
+                    f"No .jsonl transcripts found in {transcript}"
+                )
+            return jsonl_files
         return [transcript]
 
     from agentgit import discover_transcripts
