@@ -1569,7 +1569,7 @@ class GitRepoBuilder:
         """Build a better subject for a 'Call <Tool>' entry.
 
         Prefers the current operation's file (Write/Edit/NotebookEdit), then
-        the assistant context summary, then the Bash command description.
+        the Bash command's description, then a generic file-reading subject.
         """
         op = getattr(self, "_current_operation", None)
         if op is not None:
@@ -1589,6 +1589,20 @@ class GitRepoBuilder:
             if m:
                 desc = m.group(1)[:72]
                 return f"Bash: {desc}"
+            # Fall back to the first words of the command itself
+            m = re_module.search(r'"command":\s*"([^"]+)"', rest)
+            if m:
+                cmd = m.group(1).split("\\n")[0][:60]
+                return f"Bash: {cmd}"
+        if tool in ("Read", "Grep", "Glob"):
+            import re as re_module
+
+            m = re_module.search(r'"file_path":\s*"([^"]+)"', rest)
+            if not m:
+                m = re_module.search(r'"path":\s*"([^"]+)"', rest)
+            if m:
+                name = m.group(1).rstrip('/\\"').rsplit("/", 1)[-1]
+                return f"{tool} {name}"
         return None
 
     def _format_generic_entry(
