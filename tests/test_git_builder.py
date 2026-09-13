@@ -1393,3 +1393,62 @@ class TestEnsureInitialStateForEdit:
 
         content = builder._ensure_initial_state_for_edit(operation)
         assert content is None
+
+
+class TestSubjectRules:
+    """Tests for GitRepoBuilder._apply_subject_rules."""
+
+    def _builder(self, tmp_path):
+        from agentgit.git_builder import GitRepoBuilder
+
+        return GitRepoBuilder(output_dir=tmp_path)
+
+    def test_call_edit_becomes_update_file(self, tmp_path):
+        builder = self._builder(tmp_path)
+        from agentgit.core import FileOperation, OperationType
+
+        builder._current_operation = FileOperation(
+            file_path="/x/y/thing.py",
+            operation_type=OperationType.EDIT,
+            timestamp="2025-01-01T00:00:00Z",
+        )
+        msg = builder._apply_subject_rules("Call Edit\n\n---\n\nEntry-Id: x")
+
+        assert msg.startswith("Update thing.py")
+
+    def test_call_write_becomes_add_file(self, tmp_path):
+        builder = self._builder(tmp_path)
+        from agentgit.core import FileOperation, OperationType
+
+        builder._current_operation = FileOperation(
+            file_path="/x/new.py",
+            operation_type=OperationType.WRITE,
+            timestamp="2025-01-01T00:00:00Z",
+        )
+        msg = builder._apply_subject_rules("Call Write\n\nbody")
+
+        assert msg.startswith("Add new.py")
+
+    def test_call_bash_uses_description(self, tmp_path):
+        builder = self._builder(tmp_path)
+        builder._current_operation = None
+        msg = builder._apply_subject_rules(
+            'Call Bash\n\n"command": "ls",\n  "description": "List the files"'
+        )
+
+        assert msg.startswith("Bash: List the files")
+
+    def test_informative_subject_unchanged(self, tmp_path):
+        builder = self._builder(tmp_path)
+        msg = builder._apply_subject_rules("Already good\n\nbody")
+
+        assert msg == "Already good\n\nbody"
+
+    def test_read_subject_uses_file_path(self, tmp_path):
+        builder = self._builder(tmp_path)
+        builder._current_operation = None
+        msg = builder._apply_subject_rules(
+            'Call Read\n\n"file_path": "/a/b/notes.md"'
+        )
+
+        assert msg.startswith("Read notes.md")

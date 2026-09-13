@@ -1122,3 +1122,61 @@ class TestConversationRoundsWithToolResults:
 
         assert len(rounds) == 2
         assert rounds[1].prompt.text == "Now add tests"
+
+
+class TestStructuredPatchReconstruction:
+    """Tests for _reconstruct_from_structured_patch."""
+
+    def test_reconstructs_context_and_removed_lines(self):
+        from agentgit.formats.claude_code import _reconstruct_from_structured_patch
+
+        patch = [
+            {
+                "oldStart": 1,
+                "oldLines": 3,
+                "newStart": 1,
+                "newLines": 3,
+                # structuredPatch lines are diff-style: ' ' context, '-' removed,
+                # '+' added
+                "lines": [
+                    " keep me",
+                    "-remove me",
+                    "+add me",
+                    " tail",
+                ],
+            }
+        ]
+
+        result = _reconstruct_from_structured_patch(patch)
+
+        lines = result.split("\n")
+        assert lines[0] == "keep me"
+        assert lines[1] == "remove me"
+        assert lines[2] == "tail"
+        assert "add me" not in result
+
+    def test_returns_none_for_empty_patch(self):
+        from agentgit.formats.claude_code import _reconstruct_from_structured_patch
+
+        assert _reconstruct_from_structured_patch(None) is None
+        assert _reconstruct_from_structured_patch([]) is None
+
+    def test_gaps_are_empty_lines(self):
+        from agentgit.formats.claude_code import _reconstruct_from_structured_patch
+
+        patch = [
+            {
+                "oldStart": 10,
+                "oldLines": 1,
+                "newStart": 10,
+                "newLines": 1,
+                "lines": ["-only line"],
+            }
+        ]
+
+        result = _reconstruct_from_structured_patch(patch)
+
+        lines = result.split("\n")
+        assert len(lines) == 10
+        assert lines[9] == "only line"
+        assert all(l == "" for l in lines[:9])

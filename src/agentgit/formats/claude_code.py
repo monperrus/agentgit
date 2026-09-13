@@ -101,17 +101,17 @@ def _reconstruct_from_structured_patch(patch: Any) -> str | None:
         old_start = hunk.get("oldStart", 1) or 1
         hunk_lines = hunk.get("lines", [])
         ensure(old_start - 1)
-        for i, raw in enumerate(hunk_lines):
-            text = raw[1:] if raw and raw[0] in "+- " else raw
-            if not raw or raw[0] in "- ":
+        # Running old-file line number for this hunk; '+' lines don't
+        # consume an old line, everything else does.
+        old_line = old_start - 1
+        for raw in hunk_lines:
+            marker = raw[0] if raw else " "
+            text = raw[1:] if marker in "+- " else raw
+            if marker in "- ":
                 # Pre-edit content: removed and context lines
-                idx = old_start - 1 + i - sum(
-                    1
-                    for prev in hunk_lines[:i]
-                    if prev and prev[0] == "+"
-                )
-                ensure(idx + 1)
-                lines[idx] = text
+                ensure(old_line + 1)
+                lines[old_line] = text
+            old_line += 0 if marker == "+" else 1
     if not any(l is not None for l in lines):
         return None
     return "\n".join(l if l is not None else "" for l in lines)
