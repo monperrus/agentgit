@@ -706,6 +706,7 @@ class GitRepoBuilder:
         author_name: str = "Agent",
         author_email: str = "agent@local",
         incremental: bool = True,
+        file_ops_only: bool = False,
     ) -> tuple[Repo, Path, dict[str, str]]:
         """Build git repo with conversational structure.
 
@@ -714,12 +715,17 @@ class GitRepoBuilder:
         2. One commit per entry on that branch
         3. A merge commit back to session branch (authored by the human user)
 
+        With file_ops_only=True, only file creation/edit/deletion operations
+        are committed (one commit per operation, linear on the session
+        branch). Conversational entries produce no commits.
+
         Args:
             conversation_rounds: List of ConversationRound objects.
             transcript: The full transcript for operation lookup.
             author_name: Name for agent commits.
             author_email: Email for agent commits.
             incremental: If True, skip already-processed entries.
+            file_ops_only: If True, commit only file operations.
 
         Returns:
             Tuple of (repo, repo_path, path_mapping).
@@ -765,6 +771,15 @@ class GitRepoBuilder:
                 session_branch = self.repo.create_head(self.session_branch_name, main_ref)
                 session_branch.checkout()
                 logger.info("Created session branch: %s", self.session_branch_name)
+
+        if file_ops_only:
+            # Linear history: one commit per file operation, nothing else
+            for op in transcript.operations:
+                if incremental and self._is_operation_processed(op):
+                    continue
+                self._apply_operation(op)
+                self._processed_ops.add(self._get_operation_id(op))
+            return self.repo, self.output_dir, self.path_mapping
 
         # Process each conversation round
         for round in conversation_rounds:

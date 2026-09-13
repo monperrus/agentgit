@@ -461,6 +461,11 @@ def main() -> None:
     is_flag=True,
     help="Rebuild from scratch, discarding existing branches and state.",
 )
+@click.option(
+    "--file-ops-only",
+    is_flag=True,
+    help="Commit only file creation/edit/deletion events (linear history).",
+)
 def process(
     transcript: Path | None,
     output: Path | None,
@@ -472,6 +477,7 @@ def process(
     enhancer: str | None,
     enhance_model: str | None,
     reprocess: bool,
+    file_ops_only: bool,
 ) -> None:
     """Process a transcript into a git repository.
 
@@ -487,6 +493,9 @@ def process(
     Use --reprocess to rebuild the repository from scratch, discarding all
     existing branches and state. Useful after updating agentgit to apply
     new features like updated branch naming.
+
+    Use --file-ops-only to commit only file creation/edit/deletion events,
+    as a linear history with one commit per operation.
     """
     transcripts = resolve_transcripts(transcript)
 
@@ -516,6 +525,7 @@ def process(
             enhancer=enhancer,
             enhance_model=enhance_model,
             reprocess=reprocess,
+            file_ops_only=file_ops_only,
         )
 
 
@@ -666,11 +676,13 @@ def _run_process(
     enhancer: str | None = None,
     enhance_model: str | None = None,
     reprocess: bool = False,
+    file_ops_only: bool = False,
 ) -> None:
     """Run processing of one or more transcripts.
 
     Args:
         reprocess: If True, rebuild from scratch instead of incremental.
+        file_ops_only: If True, only commit file operations.
     """
     from agentgit import build_repo_grouped, parse_transcript
 
@@ -832,6 +844,7 @@ def _run_process(
                 session_id=session["session_id"],
                 agent_name=session["agent_name"],
                 incremental=not reprocess,
+                file_ops_only=file_ops_only,
             )
 
             total_prompts += len(session["parsed"].prompts)

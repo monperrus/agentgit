@@ -207,6 +207,7 @@ def build_repo_grouped(
     session_id: str | None = None,
     agent_name: str | None = None,
     incremental: bool = True,
+    file_ops_only: bool = False,
 ) -> tuple[Repo, Path, dict[str, str]]:
     """Build a git repository using conversational structure.
 
@@ -223,6 +224,8 @@ def build_repo_grouped(
         session_id: Optional session identifier. If provided, creates a session branch.
         agent_name: Optional agent/format name for branch naming (e.g., 'claude-code').
         incremental: If True, skip already-processed entries. Default True.
+        file_ops_only: If True, only commit file creation/edit/deletion events
+            (linear history, one commit per operation). Default False.
 
     Returns:
         Tuple of (repo, repo_path, path_mapping).
@@ -254,6 +257,7 @@ def build_repo_grouped(
         author_name=author_name,
         author_email=author_email,
         incremental=incremental,
+        file_ops_only=file_ops_only,
     )
 
 
