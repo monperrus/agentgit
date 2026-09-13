@@ -49,12 +49,15 @@ class Prompt:
 class AssistantContext:
     """Context from assistant messages preceding a file operation.
 
-    Captures the reasoning/thinking that explains why a change was made.
+    Captures the reasoning/thinking that explains why a change was made,
+    plus the explanation the assistant gave right after the change.
     """
 
     thinking: Optional[str] = None
     text: Optional[str] = None
     timestamp: str = ""
+    # Explanation text produced by the assistant after the operation
+    after: Optional[str] = None
 
     @property
     def summary(self) -> str:

@@ -134,9 +134,11 @@ def format_commit_message(operation: FileOperation) -> str:
     Structure:
     - Subject line: operation type and file
     - Blank line
-    - User prompt (the "why") - full text, no truncation
+    - User prompt nearest before the operation (the "why"), full text
     - Blank line
-    - Assistant context if available
+    - Assistant reasoning before the operation, if available
+    - Blank line
+    - Assistant explanation after the operation, if available
     - Blank line
     - Git trailers for machine parsing
 
@@ -154,13 +156,19 @@ def format_commit_message(operation: FileOperation) -> str:
 
     # User prompt (the "why") - full text, no truncation
     if operation.prompt:
-        body_parts.append(f"Prompt #{operation.prompt.short_id}:\n{operation.prompt.text}")
+        body_parts.append(f"Prompt:\n{operation.prompt.text}")
 
-    # Assistant context (the reasoning)
-    if operation.assistant_context and operation.assistant_context.summary:
-        context = operation.assistant_context.summary
-        if context:
-            body_parts.append(f"Context:\n{context}")
+    # Assistant reasoning before the change
+    context = operation.assistant_context
+    if context:
+        if context.thinking:
+            body_parts.append(f"Reasoning:\n{context.thinking}")
+        elif context.text:
+            body_parts.append(f"Reasoning:\n{context.text}")
+
+    # Assistant explanation after the change
+    if context and context.after:
+        body_parts.append(f"Explanation:\n{context.after}")
 
     body = "\n\n".join(body_parts) if body_parts else ""
 

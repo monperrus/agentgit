@@ -70,7 +70,7 @@ class TestFormatCommitMessage:
             prompt=prompt,
         )
         message = format_commit_message(op)
-        assert f"Prompt #{prompt.short_id}:" in message
+        assert "Prompt:" in message
         assert long_prompt in message
 
     def test_includes_trailers(self):
@@ -1452,3 +1452,58 @@ class TestSubjectRules:
         )
 
         assert msg.startswith("Read notes.md")
+
+
+class TestFormatCommitMessageContexts:
+    """Tests for prompt/reasoning/explanation sections in op commits."""
+
+    def test_sections_in_order(self):
+        """Prompt, Reasoning and Explanation appear in that order."""
+        from agentgit.core import AssistantContext
+
+        ctx = AssistantContext(
+            thinking="I should add auth",
+            text="Adding auth now",
+            after="Auth added successfully",
+        )
+        op = FileOperation(
+            file_path="/file.py",
+            operation_type=OperationType.EDIT,
+            timestamp="2025-01-01T00:00:00Z",
+            prompt=Prompt(text="Add authentication", timestamp="2025-01-01T00:00:00Z"),
+            assistant_context=ctx,
+        )
+        message = format_commit_message(op)
+
+        assert "Prompt:\nAdd authentication" in message
+        assert "Reasoning:\nI should add auth" in message
+        assert "Explanation:\nAuth added successfully" in message
+        assert message.index("Prompt:") < message.index("Reasoning:") < message.index("Explanation:")
+
+    def test_prefers_thinking_over_text_in_reasoning(self):
+        """Thinking takes precedence over plain text for the reasoning section."""
+        from agentgit.core import AssistantContext
+
+        ctx = AssistantContext(thinking="deep reasoning", text="shallow text")
+        op = FileOperation(
+            file_path="/file.py",
+            operation_type=OperationType.EDIT,
+            timestamp="2025-01-01T00:00:00Z",
+            assistant_context=ctx,
+        )
+        message = format_commit_message(op)
+
+        assert "Reasoning:\ndeep reasoning" in message
+        assert "shallow text" not in message
+
+    def test_no_sections_without_context(self):
+        """No Reasoning/Explanation headers when context is absent."""
+        op = FileOperation(
+            file_path="/file.py",
+            operation_type=OperationType.WRITE,
+            timestamp="2025-01-01T00:00:00Z",
+        )
+        message = format_commit_message(op)
+
+        assert "Reasoning:" not in message
+        assert "Explanation:" not in message

@@ -1235,3 +1235,96 @@ class TestEntryClassificationHelpers:
 
         entry = self._entry("user", "plain prompt")
         assert _is_pure_tool_result_entry(entry) is False
+
+
+class TestAfterExplanation:
+    """Tests for post-operation explanation capture."""
+
+    def _write_jsonl(self, tmp_path, entries):
+        import json as json_module
+
+        path = tmp_path / "session.jsonl"
+        path.write_text(
+            "".join(json_module.dumps(e) + "\n" for e in entries)
+        )
+        return path
+
+    def test_captures_explanation_after_operation(self, plugin, tmp_path):
+        """Text right after the tool call lands in context.after."""
+        entries = [
+            {"type": "user", "timestamp": "2025-01-01T10:00:00.000Z",
+             "message": {"content": "Add a module"}, "sessionId": "s", "cwd": "/p"},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:05.000Z",
+             "message": {"content": [
+                 {"type": "tool_use", "id": "toolu_1", "name": "Write",
+                  "input": {"file_path": "/p/m.py", "content": "x=1"}}]}},
+            {"type": "user", "timestamp": "2025-01-01T10:00:06.000Z",
+             "message": {"content": [
+                 {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:10.000Z",
+             "message": {"content": [
+                 {"type": "text", "text": "Module created, it exports x."}]}},
+        ]
+        path = self._write_jsonl(tmp_path, entries)
+        transcript = plugin.agentgit_parse_transcript(path, "claude_code_jsonl")
+        transcript.operations = plugin.agentgit_extract_operations(transcript)
+
+        op = transcript.operations[0]
+        op = plugin.agentgit_enrich_operation(op, transcript)
+
+        assert op.assistant_context is not None
+        assert op.assistant_context.after == "Module created, it exports x."
+
+    def test_stops_at_next_tool_call(self, plugin, tmp_path):
+        """Explanation window ends at the next tool call."""
+        entries = [
+            {"type": "user", "timestamp": "2025-01-01T10:00:00.000Z",
+             "message": {"content": "Add a module"}, "sessionId": "s", "cwd": "/p"},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:05.000Z",
+             "message": {"content": [
+                 {"type": "tool_use", "id": "toolu_1", "name": "Write",
+                  "input": {"file_path": "/p/m.py", "content": "x=1"}}]}},
+            {"type": "user", "timestamp": "2025-01-01T10:00:06.000Z",
+             "message": {"content": [
+                 {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:10.000Z",
+             "message": {"content": [
+                 {"type": "text", "text": "Now testing it."},
+                 {"type": "tool_use", "id": "toolu_2", "name": "Bash",
+                  "input": {"command": "pytest"}}]}},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:15.000Z",
+             "message": {"content": [
+                 {"type": "text", "text": "All tests pass!"}]}},
+        ]
+        path = self._write_jsonl(tmp_path, entries)
+        transcript = plugin.agentgit_parse_transcript(path, "claude_code_jsonl")
+        transcript.operations = plugin.agentgit_extract_operations(transcript)
+
+        op = transcript.operations[0]
+        op = plugin.agentgit_enrich_operation(op, transcript)
+
+        assert op.assistant_context is not None
+        # "Now testing it." is collected (blocks before the tool call in the
+        # same message), but "All tests pass!" is past the window.
+        assert op.assistant_context.after == "Now testing it."
+
+    def test_stops_at_next_human_prompt(self, plugin, tmp_path):
+        """Explanation window ends at the next human prompt."""
+        entries = [
+            {"type": "user", "timestamp": "2025-01-01T10:00:00.000Z",
+             "message": {"content": "Add a module"}, "sessionId": "s", "cwd": "/p"},
+            {"type": "assistant", "timestamp": "2025-01-01T10:00:05.000Z",
+             "message": {"content": [
+                 {"type": "tool_use", "id": "toolu_1", "name": "Write",
+                  "input": {"file_path": "/p/m.py", "content": "x=1"}}]}},
+            {"type": "user", "timestamp": "2025-01-01T10:00:20.000Z",
+             "message": {"content": "Now do something else"}},
+        ]
+        path = self._write_jsonl(tmp_path, entries)
+        transcript = plugin.agentgit_parse_transcript(path, "claude_code_jsonl")
+        transcript.operations = plugin.agentgit_extract_operations(transcript)
+
+        op = transcript.operations[0]
+        op = plugin.agentgit_enrich_operation(op, transcript)
+
+        assert op.assistant_context is None or op.assistant_context.after is None

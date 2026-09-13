@@ -394,37 +394,74 @@ class ClaudeCodePlugin:
         # start of the enclosing user turn (a real human prompt), so we keep
         # the most recent non-empty thinking/text seen since then.
         context = AssistantContext()
+        seen_target = False
         for entry in transcript.entries:
-            if entry.timestamp > operation.timestamp:
-                break
+            if not seen_target:
+                if entry.timestamp > operation.timestamp:
+                    break
 
+                if entry.entry_type == "user" and not entry.is_meta:
+                    # A genuine human prompt (tool_result carriers are filtered
+                    # out) starts a new reasoning context.
+                    content = entry.message.get("content", [])
+                    is_tool_result_only = isinstance(content, list) and bool(content) and all(
+                        isinstance(block, dict) and block.get("type") == "tool_result"
+                        for block in content
+                    )
+                    if not is_tool_result_only:
+                        context = AssistantContext()
+
+                elif entry.entry_type == "assistant":
+                    content = entry.message.get("content", [])
+                    if isinstance(content, list):
+                        for block in content:
+                            if isinstance(block, dict):
+                                if block.get("type") == "thinking" and block.get("thinking"):
+                                    context.thinking = block.get("thinking", "")
+                                    context.timestamp = entry.timestamp
+                                elif block.get("type") == "text" and block.get("text"):
+                                    context.text = block.get("text", "")
+                                    context.timestamp = entry.timestamp
+                                elif block.get("type") == "tool_use":
+                                    if block.get("id") == operation.tool_id:
+                                        seen_target = True
+                                        if context.thinking or context.text:
+                                            operation.assistant_context = context
+                                        break
+                continue
+
+            # After the operation: collect the explanation that follows, up
+            # to the next tool call or the next human prompt.
             if entry.entry_type == "user" and not entry.is_meta:
-                # A genuine human prompt (tool_result carriers are filtered
-                # out) starts a new reasoning context.
                 content = entry.message.get("content", [])
                 is_tool_result_only = isinstance(content, list) and bool(content) and all(
                     isinstance(block, dict) and block.get("type") == "tool_result"
                     for block in content
                 )
                 if not is_tool_result_only:
-                    context = AssistantContext()
-
+                    break
             elif entry.entry_type == "assistant":
                 content = entry.message.get("content", [])
                 if isinstance(content, list):
+                    stop = False
+                    after_texts = []
                     for block in content:
-                        if isinstance(block, dict):
-                            if block.get("type") == "thinking" and block.get("thinking"):
-                                context.thinking = block.get("thinking", "")
-                                context.timestamp = entry.timestamp
-                            elif block.get("type") == "text" and block.get("text"):
-                                context.text = block.get("text", "")
-                                context.timestamp = entry.timestamp
-                            elif block.get("type") == "tool_use":
-                                if block.get("id") == operation.tool_id:
-                                    if context.thinking or context.text:
-                                        operation.assistant_context = context
-                                    return operation
+                        if not isinstance(block, dict):
+                            continue
+                        if block.get("type") == "tool_use":
+                            stop = True
+                            break
+                        if block.get("type") == "text" and block.get("text", "").strip():
+                            after_texts.append(block.get("text", ""))
+                    if after_texts:
+                        context.after = "\n\n".join(after_texts)
+                    if stop:
+                        break
+                    if after_texts:
+                        break
+        if seen_target:
+            if context.thinking or context.text or context.after:
+                operation.assistant_context = context
 
         return operation
 
