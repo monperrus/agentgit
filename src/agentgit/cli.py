@@ -717,7 +717,7 @@ def _run_process(
             try:
                 parsed = parse_transcript(transcript_path, plugin_type=plugin_type)
 
-                if not parsed.prompt_responses:
+                if not parsed.prompt_responses and not parsed.conversation_rounds:
                     continue
 
                 # Extract agent name from format (e.g., "claude_code_jsonl" -> "claude-code")
