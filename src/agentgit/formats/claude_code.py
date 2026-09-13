@@ -137,21 +137,25 @@ class ClaudeCodePlugin:
 
         try:
             with open(path, encoding="utf-8") as f:
-                for i, line in enumerate(f):
-                    if i >= 5:
-                        break
+                saw_user_or_assistant = False
+                for line in f:
                     try:
                         obj = json.loads(line.strip())
-
-                        # Skip non-interactive sessions (from claude-cli --print mode)
-                        # These are created when tools like llm make API calls
-                        if i == 0 and obj.get("type") == "queue-operation" and obj.get("operation") == "dequeue":
-                            return None
-
-                        if obj.get("type") in ("user", "assistant", "summary"):
-                            return FORMAT_CLAUDE_CODE_JSONL
                     except json.JSONDecodeError:
                         continue
+
+                    # Skip non-interactive sessions (from claude-cli --print mode)
+                    # These are created when tools like llm make API calls
+                    if not saw_user_or_assistant and obj.get("type") == "queue-operation" and obj.get("operation") == "dequeue":
+                        return None
+
+                    if obj.get("type") in ("user", "assistant", "summary"):
+                        return FORMAT_CLAUDE_CODE_JSONL
+
+                    # Claude Code >= 2.1 sessions can open with many
+                    # mode/permission-mode/file-history-snapshot lines before
+                    # the first user/assistant entry; keep scanning instead of
+                    # giving up after 5 lines.
         except Exception:
             pass
         return None
