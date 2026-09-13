@@ -78,6 +78,29 @@ def get_last_timestamp_from_jsonl(file_path: Path) -> float | None:
     return None
 
 
+def _is_contentless_entry(entry: Any) -> bool:
+    """Check if an assistant entry carries no usable content.
+
+    Streaming padding entries contain a single ``thinking`` block whose
+    ``thinking`` text is empty (only the cryptographic signature is set).
+    They contribute nothing to commits or conversation context.
+    """
+    content = entry.message.get("content", [])
+    if not isinstance(content, list) or not content:
+        return True
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        block_type = block.get("type")
+        if block_type == "thinking" and block.get("thinking", "").strip():
+            return False
+        if block_type == "text" and block.get("text", "").strip():
+            return False
+        if block_type == "tool_use":
+            return False
+    return True
+
+
 def _is_pure_tool_result_entry(entry: Any) -> bool:
     """Check if a user entry only carries tool results (no human text).
 
@@ -174,6 +197,12 @@ class ClaudeCodePlugin:
                     is_continuation=obj.get("isCompactSummary", False),
                     is_meta=obj.get("isMeta", False),
                 )
+                # Skip assistant entries with no usable content: streaming
+                # padding entries only carry an empty thinking block with a
+                # signature. Committing them adds noise ("Assistant response"
+                # empty commits) without information.
+                if entry_type == "assistant" and _is_contentless_entry(entry):
+                    continue
                 entries.append(entry)
 
                 if entry_type == "user" and not entry.is_meta:

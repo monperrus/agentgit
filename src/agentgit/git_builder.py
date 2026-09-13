@@ -1287,15 +1287,18 @@ class GitRepoBuilder:
         # Apply file operations if any
         files_changed = []
         for op in operations:
+            self._current_operation = op
             if self._apply_operation_no_commit(op):
                 rel_path = self.path_mapping.get(op.file_path, op.file_path)
                 files_changed.append(rel_path)
+        self._current_operation = operations[-1] if operations else None
 
         # Generate entry ID for tracking
         entry_id = self._get_entry_id(entry)
 
         # Create commit message
         commit_msg = self._format_entry_commit_message(entry, round, operations)
+        commit_msg = self._apply_subject_rules(commit_msg)
 
         # Create commit (may be empty if no file changes)
         if files_changed:
@@ -1472,6 +1475,12 @@ class GitRepoBuilder:
                 subject = f"Call {tool_calls[0].get('name', 'tool')}"
             else:
                 subject = f"Call {len(tool_calls)} tools"
+        elif thinking_blocks:
+            first_thinking = thinking_blocks[0].split('\n')[0].strip()
+            if first_thinking:
+                subject = first_thinking[:72] if len(first_thinking) > 72 else first_thinking
+            else:
+                subject = "Assistant response"
         else:
             subject = "Assistant response"
 
@@ -1515,6 +1524,73 @@ class GitRepoBuilder:
         trailers_str = "\n".join(trailers)
         return f"{subject}\n\n{body}\n\n{trailers_str}"
 
+    def _apply_subject_rules(self, message: str) -> str:
+        """Post-process a commit message subject for readability.
+
+        Turns mechanical placeholders into informative subjects:
+        - ``Call Edit`` / ``Call Write`` / ``Call Bash`` (single tool entries)
+          become ``Edit <filename>``, using assistant context or the
+          operation's prompt as a fallback description.
+        - Empty or whitespace-only subjects fall back to the first line of
+          the body.
+
+        Messages whose subject already carries information are returned
+        unchanged.
+        """
+        import re as re_module
+
+        # Split subject from the rest (subject = up to first blank line)
+        parts = message.split("\n\n", 1)
+        subject = parts[0].strip()
+        rest = parts[1] if len(parts) > 1 else ""
+
+        m = re_module.match(r"^Call (\w+)$", subject)
+        if m:
+            tool = m.group(1)
+            # Filename of the first file operation in this commit, if any:
+            # the trailers carry Tool-Id lines; the diff itself is not
+            # available here, so we look the message's file list via callers.
+            replacement = self._subject_for_tool_entry(tool, rest)
+            if replacement:
+                subject = replacement
+
+        if not subject and rest:
+            first_line = next(
+                (ln.strip() for ln in rest.splitlines() if ln.strip()), ""
+            )
+            if first_line and not first_line.startswith("#"):
+                subject = first_line[:72]
+
+        if not rest:
+            return subject
+        return f"{subject}\n\n{rest}"
+
+    def _subject_for_tool_entry(self, tool: str, rest: str) -> str | None:
+        """Build a better subject for a 'Call <Tool>' entry.
+
+        Prefers the current operation's file (Write/Edit/NotebookEdit), then
+        the assistant context summary, then the Bash command description.
+        """
+        op = getattr(self, "_current_operation", None)
+        if op is not None:
+            verb = {"write": "Add", "edit": "Update", "delete": "Remove"}.get(
+                str(op.operation_type).rsplit(".", 1)[-1].lower()
+                if hasattr(op.operation_type, "name")
+                else str(op.operation_type).lower(),
+                None,
+            )
+            if verb:
+                return f"{verb} {op.filename}"
+        if tool == "Bash":
+            # Use the command's description field when present in the body
+            import re as re_module
+
+            m = re_module.search(r'"description":\s*"([^"]+)"', rest)
+            if m:
+                desc = m.group(1)[:72]
+                return f"Bash: {desc}"
+        return None
+
     def _format_generic_entry(
         self,
         entry: "TranscriptEntry",
@@ -1553,10 +1629,8 @@ class GitRepoBuilder:
         """Format merge commit message for a conversation round."""
         # Subject: "User Prompt #X" where X is the sequence number
         subject = f"User Prompt #{round.sequence}"
-
         # Body: Full prompt text (not truncated)
         body = round.prompt.text
-
         # Trailers
         trailers = [
             "---",
