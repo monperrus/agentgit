@@ -308,21 +308,37 @@ class ClaudeCodePlugin:
         if current_prompt:
             operation.prompt = current_prompt
 
-        # Find assistant context (thinking/text) immediately before this tool use
+        # Find assistant context (thinking/text) preceding this tool use.
+        # A different tool_use in between does NOT invalidate the context:
+        # agents routinely think, run a Bash probe, then edit a file — the
+        # reasoning still explains the edit. Context is only bounded by the
+        # start of the enclosing user turn (a real human prompt), so we keep
+        # the most recent non-empty thinking/text seen since then.
         context = AssistantContext()
         for entry in transcript.entries:
             if entry.timestamp > operation.timestamp:
                 break
 
-            if entry.entry_type == "assistant":
+            if entry.entry_type == "user" and not entry.is_meta:
+                # A genuine human prompt (tool_result carriers are filtered
+                # out) starts a new reasoning context.
+                content = entry.message.get("content", [])
+                is_tool_result_only = isinstance(content, list) and bool(content) and all(
+                    isinstance(block, dict) and block.get("type") == "tool_result"
+                    for block in content
+                )
+                if not is_tool_result_only:
+                    context = AssistantContext()
+
+            elif entry.entry_type == "assistant":
                 content = entry.message.get("content", [])
                 if isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict):
-                            if block.get("type") == "thinking":
+                            if block.get("type") == "thinking" and block.get("thinking"):
                                 context.thinking = block.get("thinking", "")
                                 context.timestamp = entry.timestamp
-                            elif block.get("type") == "text":
+                            elif block.get("type") == "text" and block.get("text"):
                                 context.text = block.get("text", "")
                                 context.timestamp = entry.timestamp
                             elif block.get("type") == "tool_use":
@@ -330,7 +346,6 @@ class ClaudeCodePlugin:
                                     if context.thinking or context.text:
                                         operation.assistant_context = context
                                     return operation
-                                context = AssistantContext()
 
         return operation
 
