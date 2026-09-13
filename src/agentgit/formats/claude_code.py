@@ -78,6 +78,23 @@ def get_last_timestamp_from_jsonl(file_path: Path) -> float | None:
     return None
 
 
+def _is_pure_tool_result_entry(entry: Any) -> bool:
+    """Check if a user entry only carries tool results (no human text).
+
+    Claude Code feeds tool output back to the model as ``user`` entries whose
+    content is a list of ``tool_result`` blocks. These are not human prompts
+    and must not start a new conversation round — otherwise every assistant
+    entry between a tool call and its result is dropped from the round.
+    """
+    content = entry.message.get("content", [])
+    if not isinstance(content, list) or not content:
+        return False
+    return all(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
 class ClaudeCodePlugin:
     """Plugin for parsing Claude Code JSONL transcripts."""
 
@@ -625,16 +642,28 @@ class ClaudeCodePlugin:
         current_entries: list[TranscriptEntry] = []
         sequence = 0
 
+        def flush_round() -> None:
+            nonlocal current_prompt, current_entries
+            if current_prompt is not None and current_entries:
+                rounds.append(ConversationRound(
+                    prompt=current_prompt,
+                    entries=current_entries,
+                    sequence=sequence
+                ))
+            current_prompt = None
+            current_entries = []
+
         for entry in transcript.entries:
-            # New user prompt starts a new round
-            if entry.entry_type == "user" and not entry.is_meta:
-                # Save previous round if it exists
-                if current_prompt is not None and current_entries:
-                    rounds.append(ConversationRound(
-                        prompt=current_prompt,
-                        entries=current_entries,
-                        sequence=sequence
-                    ))
+            # Only genuine human prompts (with text, not tool results) start
+            # a new round. User entries carrying pure tool_result content are
+            # the harness feeding tool output back to the model — they belong
+            # to the ongoing round, not a new one.
+            if (
+                entry.entry_type == "user"
+                and not entry.is_meta
+                and not _is_pure_tool_result_entry(entry)
+            ):
+                flush_round()
 
                 # Start new round
                 sequence += 1
@@ -663,12 +692,7 @@ class ClaudeCodePlugin:
                     current_entries.append(entry)
 
         # Don't forget the last round
-        if current_prompt is not None and current_entries:
-            rounds.append(ConversationRound(
-                prompt=current_prompt,
-                entries=current_entries,
-                sequence=sequence
-            ))
+        flush_round()
 
         return rounds
 

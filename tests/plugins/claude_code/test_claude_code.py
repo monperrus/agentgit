@@ -74,6 +74,104 @@ def sample_jsonl(tmp_path):
     return jsonl_path
 
 
+@pytest.fixture
+def sample_jsonl_with_tool_results(tmp_path):
+    """Create a sample JSONL file with tool_result entries between tool calls.
+
+    Mirrors real Claude Code transcripts: tool output is fed back as ``user``
+    entries carrying pure ``tool_result`` content blocks. A regression in
+    round-building treated these as new human prompts, dropping every
+    assistant entry between a tool call and its result.
+    """
+    content = [
+        {
+            "type": "user",
+            "timestamp": "2025-01-01T10:00:00.000Z",
+            "message": {"content": "Add a greeting module"},
+            "sessionId": "test-session",
+            "cwd": "/test/project",
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2025-01-01T10:00:05.000Z",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_001",
+                        "name": "Write",
+                        "input": {
+                            "file_path": "/test/project/greet.py",
+                            "content": "def greet():\n    return 'hi'",
+                        },
+                    },
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": "2025-01-01T10:00:06.000Z",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_001",
+                        "content": "File created successfully",
+                    }
+                ]
+            },
+            "toolUseResult": {
+                "type": "text",
+                "filePath": "/test/project/greet.py",
+                "originalFile": "",
+            },
+        },
+        {
+            "type": "assistant",
+            "timestamp": "2025-01-01T10:00:10.000Z",
+            "message": {
+                "content": [
+                    {"type": "text", "text": "Now add a farewell module."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_002",
+                        "name": "Write",
+                        "input": {
+                            "file_path": "/test/project/bye.py",
+                            "content": "def bye():\n    return 'bye'",
+                        },
+                    },
+                ]
+            },
+        },
+        {
+            "type": "user",
+            "timestamp": "2025-01-01T10:00:11.000Z",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_002",
+                        "content": "File created successfully",
+                    }
+                ]
+            },
+            "toolUseResult": {
+                "type": "text",
+                "filePath": "/test/project/bye.py",
+                "originalFile": "",
+            },
+        },
+    ]
+
+    jsonl_path = tmp_path / "session.jsonl"
+    with open(jsonl_path, "w") as f:
+        for line in content:
+            f.write(json.dumps(line) + "\n")
+
+    return jsonl_path
+
+
 class TestClaudeCodePlugin:
     """Tests for ClaudeCodePlugin."""
 
@@ -952,3 +1050,75 @@ class TestClaudeCodeAuthorInfo:
         result = plugin.agentgit_get_author_info(transcript)
 
         assert result is None
+
+
+class TestConversationRoundsWithToolResults:
+    """Tests for round building with tool_result user entries.
+
+    Real Claude Code transcripts interleave assistant tool_use entries with
+    user entries carrying tool_result content. These must stay inside the
+    ongoing round, not start a new one.
+    """
+
+    def test_tool_result_entries_do_not_start_new_rounds(
+        self, plugin, sample_jsonl_with_tool_results
+    ):
+        """All entries after a tool_result should stay in the same round."""
+        transcript = plugin.agentgit_parse_transcript(
+            sample_jsonl_with_tool_results, "claude_code_jsonl"
+        )
+
+        rounds = plugin.agentgit_build_conversation_rounds(transcript)
+
+        assert len(rounds) == 1
+
+    def test_assistant_entries_after_tool_result_are_kept(
+        self, plugin, sample_jsonl_with_tool_results
+    ):
+        """Assistant Write/Edit after a tool_result must remain in the round."""
+        transcript = plugin.agentgit_parse_transcript(
+            sample_jsonl_with_tool_results, "claude_code_jsonl"
+        )
+
+        rounds = plugin.agentgit_build_conversation_rounds(transcript)
+
+        assert len(rounds) == 1
+        tool_use_ids_in_round = [
+            block.get("id")
+            for e in rounds[0].entries
+            if isinstance(e.message.get("content"), list)
+            for block in e.message["content"]
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        ]
+        assert "toolu_001" in tool_use_ids_in_round
+        assert "toolu_002" in tool_use_ids_in_round
+
+    def test_mixed_content_user_entry_with_text_starts_new_round(
+        self, plugin, sample_jsonl_with_tool_results
+    ):
+        """A user entry with both tool_result and text blocks (e.g. an
+        interruption with commentary) still counts as a human prompt."""
+        import json as json_module
+
+        with open(sample_jsonl_with_tool_results) as f:
+            lines = [json_module.loads(line) for line in f]
+
+        # Append a follow-up human message after the tool results
+        lines.append(
+            {
+                "type": "user",
+                "timestamp": "2025-01-01T10:01:00.000Z",
+                "message": {"content": "Now add tests"},
+            }
+        )
+        sample_jsonl_with_tool_results.write_text(
+            "".join(json_module.dumps(line) + "\n" for line in lines)
+        )
+
+        transcript = plugin.agentgit_parse_transcript(
+            sample_jsonl_with_tool_results, "claude_code_jsonl"
+        )
+        rounds = plugin.agentgit_build_conversation_rounds(transcript)
+
+        assert len(rounds) == 2
+        assert rounds[1].prompt.text == "Now add tests"
