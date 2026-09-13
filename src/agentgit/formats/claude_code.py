@@ -78,6 +78,45 @@ def get_last_timestamp_from_jsonl(file_path: Path) -> float | None:
     return None
 
 
+def _reconstruct_from_structured_patch(patch: Any) -> str | None:
+    """Reconstruct pre-edit content from a Claude Code structuredPatch.
+
+    The patch only covers the changed hunks with limited context, so the
+    result is partial — but it lets an Edit on a never-Read file produce a
+    best-effort baseline instead of being silently skipped. Lines are
+    renumbered from oldStart to preserve approximate positions; missing
+    ranges show up as gaps, which is more honest than inventing content.
+    """
+    if not isinstance(patch, list) or not patch:
+        return None
+    lines: list[str | None] = []
+
+    def ensure(length: int) -> None:
+        while len(lines) < length:
+            lines.append(None)
+
+    for hunk in patch:
+        if not isinstance(hunk, dict):
+            continue
+        old_start = hunk.get("oldStart", 1) or 1
+        hunk_lines = hunk.get("lines", [])
+        ensure(old_start - 1)
+        for i, raw in enumerate(hunk_lines):
+            text = raw[1:] if raw and raw[0] in "+- " else raw
+            if not raw or raw[0] in "- ":
+                # Pre-edit content: removed and context lines
+                idx = old_start - 1 + i - sum(
+                    1
+                    for prev in hunk_lines[:i]
+                    if prev and prev[0] == "+"
+                )
+                ensure(idx + 1)
+                lines[idx] = text
+    if not any(l is not None for l in lines):
+        return None
+    return "\n".join(l if l is not None else "" for l in lines)
+
+
 def _is_contentless_entry(entry: Any) -> bool:
     """Check if an assistant entry carries no usable content.
 
@@ -242,15 +281,22 @@ class ClaudeCodePlugin:
         for entry in transcript.entries:
             tool_use_result = entry.raw_entry.get("toolUseResult", {})
             if tool_use_result and "originalFile" in tool_use_result:
+                original = tool_use_result.get("originalFile")
+                if not isinstance(original, str) or not original:
+                    # originalFile can be None when the transcript was
+                    # compacted/resumed; structuredPatch still carries the
+                    # hunks (with context lines), the best available
+                    # pre-edit reconstruction.
+                    original = _reconstruct_from_structured_patch(
+                        tool_use_result.get("structuredPatch")
+                    )
                 content = entry.message.get("content", [])
                 if isinstance(content, list):
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "tool_result":
                             tool_id = block.get("tool_use_id", "")
-                            if tool_id:
-                                tool_id_to_original[tool_id] = tool_use_result.get(
-                                    "originalFile"
-                                )
+                            if tool_id and isinstance(original, str) and original:
+                                tool_id_to_original[tool_id] = original
 
         # Second pass: extract operations
         for entry in transcript.entries:
