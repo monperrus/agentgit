@@ -1180,3 +1180,58 @@ class TestStructuredPatchReconstruction:
         assert len(lines) == 10
         assert lines[9] == "only line"
         assert all(l == "" for l in lines[:9])
+
+
+class TestEntryClassificationHelpers:
+    """Tests for contentless / pure-tool-result entry classification."""
+
+    def _entry(self, entry_type, content):
+        from agentgit.core import TranscriptEntry
+
+        return TranscriptEntry(
+            entry_type=entry_type,
+            timestamp="2025-01-01T00:00:00.000Z",
+            message={"content": content},
+        )
+
+    def test_contentless_empty_thinking(self):
+        from agentgit.formats.claude_code import _is_contentless_entry
+
+        entry = self._entry("assistant", [{"type": "thinking", "thinking": "", "signature": "x"}])
+        assert _is_contentless_entry(entry) is True
+
+    def test_contentless_thinking_with_text(self):
+        from agentgit.formats.claude_code import _is_contentless_entry
+
+        entry = self._entry("assistant", [{"type": "thinking", "thinking": "real reasoning"}])
+        assert _is_contentless_entry(entry) is False
+
+    def test_contentless_empty_list(self):
+        from agentgit.formats.claude_code import _is_contentless_entry
+
+        entry = self._entry("assistant", [])
+        assert _is_contentless_entry(entry) is True
+
+    def test_pure_tool_result(self):
+        from agentgit.formats.claude_code import _is_pure_tool_result_entry
+
+        entry = self._entry("user", [{"type": "tool_result", "tool_use_id": "t1"}])
+        assert _is_pure_tool_result_entry(entry) is True
+
+    def test_mixed_content_not_pure_tool_result(self):
+        from agentgit.formats.claude_code import _is_pure_tool_result_entry
+
+        entry = self._entry(
+            "user",
+            [
+                {"type": "tool_result", "tool_use_id": "t1"},
+                {"type": "text", "text": "also a comment"},
+            ],
+        )
+        assert _is_pure_tool_result_entry(entry) is False
+
+    def test_string_content_not_pure_tool_result(self):
+        from agentgit.formats.claude_code import _is_pure_tool_result_entry
+
+        entry = self._entry("user", "plain prompt")
+        assert _is_pure_tool_result_entry(entry) is False

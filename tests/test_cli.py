@@ -1110,3 +1110,26 @@ class TestUtilityFunctions:
         result = get_agentgit_repo_path()
         assert result is not None
         assert commit.hexsha[:12] in str(result)
+
+
+class TestResolveTranscriptsDirectory:
+    """Tests for directory expansion in resolve_transcripts."""
+
+    def test_directory_expands_to_jsonl_files(self, tmp_path):
+        from agentgit.cli import resolve_transcripts
+
+        (tmp_path / "a.jsonl").write_text("{}\n")
+        (tmp_path / "b.jsonl").write_text("{}\n")
+        (tmp_path / "ignore.txt").write_text("x")
+
+        result = resolve_transcripts(tmp_path)
+
+        assert [p.name for p in result] == ["a.jsonl", "b.jsonl"]
+
+    def test_empty_directory_raises(self, tmp_path):
+        from agentgit.cli import resolve_transcripts
+        import click
+        import pytest
+
+        with pytest.raises(click.ClickException, match="No .jsonl transcripts"):
+            resolve_transcripts(tmp_path)
