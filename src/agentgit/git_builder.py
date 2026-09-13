@@ -1627,8 +1627,12 @@ class GitRepoBuilder:
         round: "ConversationRound",
     ) -> str:
         """Format merge commit message for a conversation round."""
-        # Subject: "User Prompt #X" where X is the sequence number
-        subject = f"User Prompt #{round.sequence}"
+        # Subject: first line of the prompt (truncated), prefixed by the
+        # sequence number so the timeline stays ordered
+        first_line = round.prompt.text.split("\n")[0].strip()
+        if len(first_line) > 60:
+            first_line = first_line[:57] + "..."
+        subject = f"#{round.sequence}: {first_line}" if first_line else f"User Prompt #{round.sequence}"
         # Body: Full prompt text (not truncated)
         body = round.prompt.text
         # Trailers
